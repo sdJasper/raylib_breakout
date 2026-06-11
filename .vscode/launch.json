@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Breakout",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Breakout",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                { "text": "-enable-pretty-printing" }
+            ],
+            "preLaunchTask": "CMake Build"
+        }
+    ]
+}
