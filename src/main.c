@@ -3,44 +3,73 @@
 #include <stdio.h>
 #include <string.h>
 
-// ===== TYPE DEFINITIONS =====
-typedef struct {
-    int width;
-    int height;
-} Screen;
+#include "../include/game.h"
+#include "../include/brick.h"
+#include "../include/common.h"
 
-typedef struct {
-    Vector2 pos;
-    Vector2 vel;
-    int radius;
-    float speed;
-    float accel;
-    float responseMagnitude;
-} Ball;
+void CreateLevel(Brick bricks[], int *brickCount, Screen screen) {
+    // *brickCount = 0;
+    const int bricksPerRow = 12;
+    const int brickWidth = (screen.width - 80) / bricksPerRow;  // nice spacing
+    const int brickHeight = 24;
+    const int startY = 60;
+    
+    Color colors[5] = { RED, ORANGE, YELLOW, GREEN, BLUE };
+    
+    for (int row = 0; row < 6; row++) {
+        for (int col = 0; col < bricksPerRow; col++) {
+            if (*brickCount >= MAX_BRICKS) return;
+            
+            Brick *b = &bricks[*brickCount];
+            b->rect = (Rectangle){
+                40 + col * (brickWidth + 4),
+                startY + row * (brickHeight + 4),
+                brickWidth,
+                brickHeight
+            };
+            b->color = colors[row % 5];
+            b->active = true;
+            b->hitPoints = 1;
+            (*brickCount)++;
+        }
+    }
+}
 
-typedef struct {
-    Rectangle rect;
-    int moveSpeed;
-    int score;
-    int lives;
-} Paddle;
+void DrawBricks(Brick bricks[], int brickCount) {
+    for (int i = 0; i < brickCount; i++) {
+        if (bricks[i].active) {
+            DrawRectangleRec(bricks[i].rect, bricks[i].color);
+            DrawRectangleLinesEx(bricks[i].rect, 2, Fade(WHITE, 0.3f));
+        }
+    }
+}
 
-typedef enum {
-    MENU,
-    PLAYING,
-    PAUSED,
-    GAME_OVER,
-} GameState;
+int CheckBrickCollisions(Ball *ball, Brick bricks[], int brickCount, Sound hitSound) {
+    int hitCount = 0;
+    
+    for (int i = 0; i < brickCount; i++) {
+        if (!bricks[i].active) continue;
+        
+        if (CheckCollisionCircleRec(ball->pos, ball->radius, bricks[i].rect)) {
+            bricks[i].hitPoints--;
+            
+            if (bricks[i].hitPoints <= 0) {
+                bricks[i].active = false;
+            }
+            
+            PlaySound(hitSound);
+            hitCount++;
+            
+            // Push ball out to prevent multiple hits in one frame
+            if (ball->vel.y > 0) ball->pos.y = bricks[i].rect.y - ball->radius - 1;
+            else ball->pos.y = bricks[i].rect.y + bricks[i].rect.height + ball->radius + 1;
 
-typedef struct {
-    GameState state;
-    Ball ball;
-    Paddle player;
-    int selectedMenuOption;
-    int level;
-} Game;
-
-void DrawDifficultyScreen(Screen screen, int selectedOption);
+            ball->vel.y *= -1;
+            ball->vel.x *= -1;
+        }
+    }
+    return hitCount;
+}
 
 const char **GetMenuItems(GameState state, int *outCount) {
     static const char *mainMenuItems[] = { "Start", "Quit" };
@@ -114,6 +143,7 @@ Ball Ball_Init(Screen screen, float initialSpeed, float accel, float responseMag
     ball.speed = initialSpeed;
     ball.accel = accel;
     ball.responseMagnitude = responseMagnitude;
+    ball.attached = true;
     return ball;
 }
 
@@ -126,7 +156,7 @@ Ball Ball_Init(Screen screen, float initialSpeed, float accel, float responseMag
  */
 Paddle Paddle_Init(float x, float y, int moveSpeed) {
     Paddle paddle;
-    paddle.rect = (Rectangle){ x, y, 120, 20 };
+    paddle.rect = (Rectangle){ x, y, 80, 16 };
     paddle.moveSpeed = moveSpeed;
     paddle.score = 0;
     paddle.lives = 3;
@@ -136,18 +166,35 @@ Paddle Paddle_Init(float x, float y, int moveSpeed) {
 Game Game_Init(Screen screen) {
     Game game;
     game.state = MENU;
-    game.ball = Ball_Init(screen, 6.0f, 1.05f, 8.0f);
+    game.ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
     
     int paddleMargin = 25;
-    game.player = Paddle_Init(paddleMargin, screen.height / 1.0f - 60, 8);
+    game.player = Paddle_Init(paddleMargin, screen.height / 1.0f - 30, 10);
     game.level = 1;
     game.selectedMenuOption = 0;
+    CreateLevel(game.bricks, &game.brickCount, screen);
     
     return game;
 }
 
+void Ball_AttachToPaddle(Ball *ball, Paddle *paddle) {
+    ball->attached = true;
+    ball->pos.x = paddle->rect.x + paddle->rect.width / 2.0f;
+    ball->pos.y = paddle->rect.y - ball->radius - 2.0f;
+}
+
+void Ball_Launch(Ball *ball) {
+    // random angle between -60 to 60
+    if (ball->attached) {
+        ball->attached = false;
+        // Generate a random angle between -60 and 60 degrees
+        float angle = (GetRandomValue(-60, 60) * DEG2RAD);
+        ball->vel = (Vector2){ ball->speed, -sinf(angle) * ball->speed };   // Launch at random angle
+    }
+}
+
 // ===== UPDATE =====
-int Ball_Update(Ball *ball, Screen screen) {
+int Ball_Update(Ball *ball, Screen screen, Paddle *paddle, GameState *state) {
     ball->pos.x += ball->vel.x;
     ball->pos.y += ball->vel.y;
 
@@ -167,10 +214,16 @@ int Ball_Update(Ball *ball, Screen screen) {
         ball->vel.y = fabsf(ball->vel.y);
         return 1; // Wall hit
     }
-    if (ball->pos.y + ball->radius >= screen.height) { // Bottom wall
-        // loose life, reset ball
-        Ball_ResetCenter(ball, screen);
-        return 1; // Wall hit
+    if (ball->pos.y + ball->radius >= screen.height) {
+        // Player lost a life
+        paddle->lives--;
+        
+        if (paddle->lives <= 0) {
+            *state = GAME_OVER;
+        } else {
+            ball->attached = true; // Re-attach to paddle
+        }
+        return 1;
     }
     return 0; // No wall hit
 }
@@ -221,6 +274,11 @@ void DrawStar(Vector2 center, float radius, Color color) {
 void DrawGameScene(Game *game, Screen screen, int scoreTextOffsetX) {
     DrawRectangleRec(game->player.rect, WHITE);
     DrawCircleV(game->ball.pos, game->ball.radius, RAYWHITE);
+    DrawBricks(game->bricks, game->brickCount);
+    // Draw lives
+    for (int i = 0; i < game->player.lives; i++) {
+        DrawCircle(30 + i * 25, 30, 8, WHITE);
+    }
     DrawText(TextFormat("%i", game->player.score), screen.width / 2 - scoreTextOffsetX, 30, 50, WHITE);
 }
 
@@ -376,9 +434,10 @@ int main(void) {
                     game.selectedMenuOption = 0;
                 } else if (action == MENU_ACTION_PLAY_AGAIN) {
                     game.player.score = 0;
-                    game.player = Paddle_Init(30, screen.height / 2.0f - 60, 8);
+                    game.player.lives = 3;
+                    game.player = Paddle_Init(30, screen.height / 1.0f - 30, 10);
                     game.state = PLAYING;
-                    game.ball = Ball_Init(screen, 6.0f, 1.05f, 8.0f);
+                    game.ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
                 } else if (action == MENU_ACTION_MAIN_MENU) {
                     game.state = MENU;
                     game.selectedMenuOption = 0;
@@ -395,14 +454,41 @@ int main(void) {
             // Update paddles
             Paddle_UpdatePlayer(&game.player, screen);
 
-            // Update ball
-            int wallBounce = Ball_Update(&game.ball, screen);
-            if (wallBounce) {
-                PlaySound(wallHit);
+            // Ball attached to paddle (serve mode)
+            if (game.ball.attached) {
+                Ball_AttachToPaddle(&game.ball, &game.player);
+                
+                if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER)) {
+                    Ball_Launch(&game.ball);
+                }
+            } 
+            else {
+                // Normal ball movement
+                int wallBounce = Ball_Update(&game.ball, screen, &game.player, &game.state);
+                if (wallBounce) {
+                    PlaySound(wallHit);
+                }
+
+                // Paddle collision
+                Ball_CheckPaddleCollision(&game.ball, &game.player, &paddleHit, 1);
+
+                // Brick collisions
+                CheckBrickCollisions(&game.ball, game.bricks, game.brickCount, scoreSound);
             }
 
-            // Check collisions
-            Ball_CheckPaddleCollision(&game.ball, &game.player, &paddleHit, 1);
+            // Check if all bricks are destroyed
+            bool allBricksCleared = true;
+            for (int i = 0; i < game.brickCount; i++) {
+                if (game.bricks[i].active) {
+                    allBricksCleared = false;
+                    break;
+                }
+            }
+
+            if (allBricksCleared) {
+                game.state = GAME_OVER;
+                // You can add a "Level Complete" message later
+            }
         }
 
         // === DRAW ===
