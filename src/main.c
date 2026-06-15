@@ -22,6 +22,7 @@ typedef struct {
     Rectangle rect;
     int moveSpeed;
     int score;
+    int lives;
 } Paddle;
 
 typedef enum {
@@ -109,7 +110,7 @@ Ball Ball_Init(Screen screen, float initialSpeed, float accel, float responseMag
     Ball ball;
     ball.pos = (Vector2){ screen.width / 2.0f, screen.height / 2.0f };
     ball.vel = (Vector2){ 0.0f, -initialSpeed };
-    ball.radius = 10;
+    ball.radius = 8;
     ball.speed = initialSpeed;
     ball.accel = accel;
     ball.responseMagnitude = responseMagnitude;
@@ -128,6 +129,7 @@ Paddle Paddle_Init(float x, float y, int moveSpeed) {
     paddle.rect = (Rectangle){ x, y, 120, 20 };
     paddle.moveSpeed = moveSpeed;
     paddle.score = 0;
+    paddle.lives = 3;
     return paddle;
 }
 
@@ -165,6 +167,11 @@ int Ball_Update(Ball *ball, Screen screen) {
         ball->vel.y = fabsf(ball->vel.y);
         return 1; // Wall hit
     }
+    if (ball->pos.y + ball->radius >= screen.height) { // Bottom wall
+        // loose life, reset ball
+        Ball_ResetCenter(ball, screen);
+        return 1; // Wall hit
+    }
     return 0; // No wall hit
 }
 
@@ -184,30 +191,10 @@ void Ball_ResetCenter(Ball *ball, Screen screen) {
 // ===== COLLISION & SCORING =====
 void Ball_CheckPaddleCollision(Ball *ball, Paddle *paddle, const Sound *hitSound, int isPlayerSide) {
     if (CheckCollisionCircleRec(ball->pos, ball->radius, paddle->rect)) {
-        float relativeHit = (ball->pos.y - (paddle->rect.y + paddle->rect.height / 2)) / (paddle->rect.height / 2);
-        if (isPlayerSide == 1) {
-            ball->vel.x = fabsf(ball->vel.x) * ball->accel;
-        } else {
-            ball->vel.x = -fabsf(ball->vel.x) * ball->accel;
-        }
-        ball->vel.y = relativeHit * ball->responseMagnitude;
+        float relativeHit = (ball->pos.x - (paddle->rect.x + paddle->rect.width / 2)) / (paddle->rect.width / 2);
+        ball->vel.y = fabsf(ball->vel.y) * -1.0f;
+        ball->vel.x = relativeHit * ball->responseMagnitude;
         PlaySound(*hitSound);
-    }
-}
-
-void Ball_CheckScoring(Ball *ball, Paddle *playerPaddle, Paddle *aiPaddle, Screen screen, const Sound *scoreSound) {
-    if (ball->pos.x - ball->radius <= 0) {
-        aiPaddle->score++;
-        PlaySound(*scoreSound);
-        Ball_ResetCenter(ball, screen);
-        ball->vel.x = ball->speed;
-        ball->vel.y = (float)GetRandomValue(-3, 3);
-    } else if (ball->pos.x + ball->radius >= screen.width) {
-        playerPaddle->score++;
-        PlaySound(*scoreSound);
-        Ball_ResetCenter(ball, screen);
-        ball->vel.x = -ball->speed;
-        ball->vel.y = (float)GetRandomValue(-3, 3);
     }
 }
 
@@ -271,7 +258,7 @@ void DrawPauseScreen(Screen screen, int selectedOption) {
 }
 
 void DrawMainMenuScreen(Screen screen, int selectedOption, int difficultyLevel) {
-    const char *titleText = "PONG - PING";
+    const char *titleText = "Breakout!!!";
     int menuCount;
     const char **menuItems = GetMenuItems(MENU, &menuCount);
     const int menuFontSize = 32;
@@ -344,7 +331,7 @@ void DrawGameOverScreen(Screen screen, const char *winnerText, int selectedOptio
 int main(void) {
     Screen screen = { 800, 450 };
 
-    InitWindow(screen.width, screen.height, "Pong - Ping");
+    InitWindow(screen.width, screen.height, "Breakout!!!");
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
 
