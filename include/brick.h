@@ -9,7 +9,17 @@ typedef struct {
     Rectangle rect;
     Color color;
     bool active;
-    int hitPoints;        // 1 = normal brick, higher = tougher
+    int hitPoints;
+    bool destroying;
+    float destroyTimer;
 } Brick;
+
+// Armor Style Definition
+typedef struct {
+    Color base;
+    Color border;
+    Color highlight;
+    int borderThickness;
+} ArmorStyle;
 
 #endif // BRICK_H

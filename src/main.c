@@ -7,39 +7,69 @@
 #include "../include/brick.h"
 #include "../include/common.h"
 
-void CreateLevel(Brick bricks[], int *brickCount, Screen screen) {
-    // *brickCount = 0;
+#define SHADOW_OFFSET 8
+#define SHADOW_COLOR (Color){ 0, 0, 0, 120 }
+
+void CreateLevel(Brick bricks[], int *brickCount, Screen screen, int level) {
+    *brickCount = 0;
     const int bricksPerRow = 12;
     const int brickWidth = (screen.width - 80) / bricksPerRow;  // nice spacing
     const int brickHeight = 24;
     const int startY = 60;
     
-    Color colors[5] = { RED, ORANGE, YELLOW, GREEN, BLUE };
-    
+    #define MAX_PALETTES 7
+    Color palettes[MAX_PALETTES][8] = {
+        { MAROON, ORANGE, YELLOW, LIME, SKYBLUE, BLUE, PURPLE, VIOLET },
+        { PINK, RED, ORANGE, YELLOW, LIME, SKYBLUE, PURPLE, VIOLET },
+        { PINK, BEIGE, SKYBLUE, LIME, VIOLET, ORANGE, GOLD, BROWN },
+        { PURPLE, VIOLET, BLUE, DARKPURPLE, DARKGREEN, MAROON, RED, DARKPURPLE },
+        { MAROON, RED, ORANGE, GOLD, YELLOW, BROWN, RED, ORANGE },
+        { DARKPURPLE, BLUE, SKYBLUE, LIME, DARKGREEN, BLUE, SKYBLUE, DARKBLUE },
+        { RED, ORANGE, YELLOW, LIME, SKYBLUE, BLUE, PURPLE, PINK }
+    };
+    Color *currentPalette = palettes[level % MAX_PALETTES];
+
+    int armoredRows = (level / 2);
+    int tripleHPRows = (level >= 8) ? (level - 7) : 0;
+
+    // Clamp
+    if (armoredRows > 6) armoredRows = 6;
+    if (tripleHPRows > 3) tripleHPRows = 3;
+
     for (int row = 0; row < 6; row++) {
+        int rowHP = 1;
+        bool isArmored = false;
+
+        if (level % 2 == 0) { // Even levels: armor from top
+            isArmored = (row < armoredRows);
+        } else { // Odd levels: armor from bottom
+            isArmored = (row >= 6 - armoredRows);
+        }
+
+        if (isArmored) {
+            if (tripleHPRows > 0 && row < tripleHPRows) {
+                rowHP = 3;
+            } else {
+                rowHP = 2;
+            }
+        }
+
         for (int col = 0; col < bricksPerRow; col++) {
             if (*brickCount >= MAX_BRICKS) return;
             
             Brick *b = &bricks[*brickCount];
             b->rect = (Rectangle){
-                40 + col * (brickWidth + 4),
+                20 + col * (brickWidth + 4),
                 startY + row * (brickHeight + 4),
                 brickWidth,
                 brickHeight
             };
-            b->color = colors[row % 5];
             b->active = true;
-            b->hitPoints = 1;
+            b->hitPoints = rowHP;
+            b->color = currentPalette[row % 6];
+            b->destroying = false;
+            b->destroyTimer = 0.0f;
             (*brickCount)++;
-        }
-    }
-}
-
-void DrawBricks(Brick bricks[], int brickCount) {
-    for (int i = 0; i < brickCount; i++) {
-        if (bricks[i].active) {
-            DrawRectangleRec(bricks[i].rect, bricks[i].color);
-            DrawRectangleLinesEx(bricks[i].rect, 2, Fade(WHITE, 0.3f));
         }
     }
 }
@@ -53,19 +83,47 @@ int CheckBrickCollisions(Ball *ball, Brick bricks[], int brickCount, Sound hitSo
         if (CheckCollisionCircleRec(ball->pos, ball->radius, bricks[i].rect)) {
             bricks[i].hitPoints--;
             
-            if (bricks[i].hitPoints <= 0) {
-                bricks[i].active = false;
+            if (bricks[i].hitPoints <= 0 && !bricks[i].destroying) {
+                bricks[i].destroying = true;
+                bricks[i].destroyTimer = 0.12f;
             }
-            
-            PlaySound(hitSound);
-            hitCount++;
-            
-            // Push ball out to prevent multiple hits in one frame
-            if (ball->vel.y > 0) ball->pos.y = bricks[i].rect.y - ball->radius - 1;
-            else ball->pos.y = bricks[i].rect.y + bricks[i].rect.height + ball->radius + 1;
 
-            ball->vel.y *= -1;
-            ball->vel.x *= -1;
+            // === PITCH VARIATION BASED ON BRICK HEIGHT ===
+            float pitch = 1.0f;
+            
+            pitch = 0.8f + (bricks[i].rect.y / 400.0f);   // Adjust divisor based on your screen size
+            
+            // Clamp pitch (recommended range: 0.5 to 2.0)
+            if (pitch < 0.6f) pitch = 0.6f;
+            if (pitch > 1.8f) pitch = 1.8f;
+
+            SetSoundPitch(hitSound, pitch);
+            PlaySound(hitSound);
+
+            // === IMPROVED COLLISION RESPONSE ===
+            float overlapLeft   = (ball->pos.x + ball->radius) - bricks[i].rect.x;
+            float overlapRight  = (bricks[i].rect.x + bricks[i].rect.width) - (ball->pos.x - ball->radius);
+            float overlapTop    = (ball->pos.y + ball->radius) - bricks[i].rect.y;
+            float overlapBottom = (bricks[i].rect.y + bricks[i].rect.height) - (ball->pos.y - ball->radius);
+
+            // Find the smallest overlap (this is the side we hit)
+            float minOverlap = fminf(fminf(overlapLeft, overlapRight), fminf(overlapTop, overlapBottom));
+
+            if (minOverlap == overlapTop || minOverlap == overlapBottom) {
+                // Hit top or bottom of brick → reverse vertical velocity
+                ball->vel.y *= -1;
+            } else {
+                // Hit left or right of brick → reverse horizontal velocity
+                ball->vel.x *= -1;
+            }
+
+            hitCount++;
+
+            // Push ball out to prevent sticking
+            if (minOverlap == overlapLeft)   ball->pos.x -= minOverlap + 1;
+            if (minOverlap == overlapRight)  ball->pos.x += minOverlap + 1;
+            if (minOverlap == overlapTop)    ball->pos.y -= minOverlap + 1;
+            if (minOverlap == overlapBottom) ball->pos.y += minOverlap + 1;
         }
     }
     return hitCount;
@@ -172,29 +230,11 @@ Game Game_Init(Screen screen) {
     game.player = Paddle_Init(paddleMargin, screen.height / 1.0f - 30, 10);
     game.level = 1;
     game.selectedMenuOption = 0;
-    CreateLevel(game.bricks, &game.brickCount, screen);
-    
     return game;
 }
 
-void Ball_AttachToPaddle(Ball *ball, Paddle *paddle) {
-    ball->attached = true;
-    ball->pos.x = paddle->rect.x + paddle->rect.width / 2.0f;
-    ball->pos.y = paddle->rect.y - ball->radius - 2.0f;
-}
-
-void Ball_Launch(Ball *ball) {
-    // random angle between -60 to 60
-    if (ball->attached) {
-        ball->attached = false;
-        // Generate a random angle between -60 and 60 degrees
-        float angle = (GetRandomValue(-60, 60) * DEG2RAD);
-        ball->vel = (Vector2){ ball->speed, -sinf(angle) * ball->speed };   // Launch at random angle
-    }
-}
-
 // ===== UPDATE =====
-int Ball_Update(Ball *ball, Screen screen, Paddle *paddle, GameState *state) {
+int Ball_Update(Ball *ball, Screen screen, Paddle *paddle, GameState *state, Sound dieSound) {
     ball->pos.x += ball->vel.x;
     ball->pos.y += ball->vel.y;
 
@@ -217,6 +257,7 @@ int Ball_Update(Ball *ball, Screen screen, Paddle *paddle, GameState *state) {
     if (ball->pos.y + ball->radius >= screen.height) {
         // Player lost a life
         paddle->lives--;
+        PlaySound(dieSound);
         
         if (paddle->lives <= 0) {
             *state = GAME_OVER;
@@ -237,21 +278,113 @@ void Paddle_UpdatePlayer(Paddle *paddle, Screen screen) {
         paddle->rect.x = screen.width - paddle->rect.width;
 }
 
+void UpdateBricks(Brick bricks[], int brickCount, float deltaTime, Paddle *paddle) {
+    for (int i = 0; i < brickCount; i++) {
+        if (bricks[i].destroying) {
+            bricks[i].destroyTimer -= deltaTime;
+            
+            if (bricks[i].destroyTimer <= 0.0f) {
+                bricks[i].active = false;
+                bricks[i].destroying = false;
+                paddle->score += 10;
+            }
+        }
+    }
+}
+
 void Ball_ResetCenter(Ball *ball, Screen screen) {
     ball->pos = (Vector2){ screen.width / 2.0f, screen.height / 2.0f };
+}
+
+void Ball_AttachToPaddle(Ball *ball, Paddle *paddle) {
+    ball->attached = true;
+    ball->pos.x = paddle->rect.x + paddle->rect.width / 2.0f;
+    ball->pos.y = paddle->rect.y - ball->radius - 2.0f;
+}
+
+void Ball_Launch(Ball *ball) {
+    if (ball->attached) {
+        ball->attached = false;
+
+        // Launch upward at a narrow random angle
+        float angle = GetRandomValue(-30, 30) * DEG2RAD; // small angle from vertical
+        ball->vel.x = sinf(angle) * ball->speed;
+        ball->vel.y = -cosf(angle) * ball->speed;
+    }
 }
 
 // ===== COLLISION & SCORING =====
 void Ball_CheckPaddleCollision(Ball *ball, Paddle *paddle, const Sound *hitSound, int isPlayerSide) {
     if (CheckCollisionCircleRec(ball->pos, ball->radius, paddle->rect)) {
         float relativeHit = (ball->pos.x - (paddle->rect.x + paddle->rect.width / 2)) / (paddle->rect.width / 2);
-        ball->vel.y = fabsf(ball->vel.y) * -1.0f;
-        ball->vel.x = relativeHit * ball->responseMagnitude;
+        float maxAngle = 60 * DEG2RAD;
+        float angle = relativeHit * maxAngle;
+
+        ball->vel.y = -cosf(angle) * ball->speed;
+        ball->vel.x = sinf(angle) * ball->speed;
+
         PlaySound(*hitSound);
     }
 }
 
 // ===== DRAWING =====
+void DrawShadow(Rectangle rect, Color shadowColor, int offset) {
+    Rectangle shadow = rect;
+    shadow.x += offset;
+    shadow.y += offset;
+    DrawRectangleRec(shadow, shadowColor);
+}
+
+void DrawCircleShadow(Vector2 center, float radius, Color shadowColor, int offset) {
+    DrawCircleV((Vector2){ center.x + offset, center.y + offset }, radius, shadowColor);
+}
+
+void DrawBricks(Brick bricks[], int brickCount) {
+    ArmorStyle armorStyles[4] = {
+        { BLANK, BLANK, BLANK, 0 },
+        { WHITE, BLANK, Fade(WHITE, 0.3f), 3 },
+        { GRAY, LIGHTGRAY, Fade(WHITE, 0.25f), 5 },
+        { GOLD, YELLOW, Fade(WHITE, 0.35f), 5 }
+    };
+
+    for (int i = 0; i < brickCount; i++) {
+        if (!bricks[i].active) continue;
+
+        int hp = bricks[i].hitPoints;
+        Color baseColor = bricks[i].color;
+
+        if (bricks[i].destroying) {
+            if ((int)(bricks[i].destroyTimer * 20) % 2 == 0) {
+                armorStyles[1].base = WHITE;
+            }
+        }
+
+        DrawShadow(bricks[i].rect, SHADOW_COLOR, SHADOW_OFFSET);
+        
+        ArmorStyle style = armorStyles[hp];
+        if (hp == 1) style.base = baseColor;
+
+        DrawRectangleRec(bricks[i].rect, style.base);
+
+        if (hp > 1) {
+            Rectangle inner = {
+                bricks[i].rect.x + 3,
+                bricks[i].rect.y + 3,
+                bricks[i].rect.width -6,
+                bricks[i].rect.height - 6
+            };
+            DrawRectangleRec(inner, style.highlight);
+            
+            DrawRectangle(
+                bricks[i].rect.x + 4, bricks[i].rect.y + 4, 
+                bricks[i].rect.width - 12, 6, Fade(WHITE, 0.4f)
+            );
+        }
+
+        DrawRectangleLinesEx(bricks[i].rect, style.borderThickness, style.border);
+    }
+}
+
 void DrawStar(Vector2 center, float radius, Color color) {
     const int points = 5;
     float innerRadius = radius * 0.5f;
@@ -272,14 +405,25 @@ void DrawStar(Vector2 center, float radius, Color color) {
 }
 
 void DrawGameScene(Game *game, Screen screen, int scoreTextOffsetX) {
-    DrawRectangleRec(game->player.rect, WHITE);
-    DrawCircleV(game->ball.pos, game->ball.radius, RAYWHITE);
-    DrawBricks(game->bricks, game->brickCount);
+    // Draw Shadows first:
+    // DrawShadow(game->player.rect, SHADOW_COLOR, SHADOW_OFFSET);
+    Rectangle playerShadow = game->player.rect;
+    playerShadow.x += SHADOW_OFFSET;
+    playerShadow.y += SHADOW_OFFSET;
+    DrawRectangleRounded(playerShadow, 0.6f, 8, SHADOW_COLOR);
+    DrawCircleShadow(game->ball.pos, game->ball.radius, SHADOW_COLOR, SHADOW_OFFSET);
     // Draw lives
     for (int i = 0; i < game->player.lives; i++) {
+        DrawCircleShadow((Vector2){ 30 + i * 25, 30 }, game->ball.radius, SHADOW_COLOR, SHADOW_OFFSET);
         DrawCircle(30 + i * 25, 30, 8, WHITE);
     }
-    DrawText(TextFormat("%i", game->player.score), screen.width / 2 - scoreTextOffsetX, 30, 50, WHITE);
+    DrawText(TextFormat("%i", game->player.score), screen.width / 2 - scoreTextOffsetX, 15, 50, WHITE);
+
+    // draw the rest of the game elements
+    DrawBricks(game->bricks, game->brickCount);
+    DrawRectangleRounded(game->player.rect, 0.6f, 8, WHITE);
+    DrawRectangleRoundedLinesEx(game->player.rect, 0.75f, 12, 3, DARKGRAY);
+    DrawCircleV(game->ball.pos, game->ball.radius, RAYWHITE);
 }
 
 void DrawPauseScreen(Screen screen, int selectedOption) {
@@ -386,6 +530,17 @@ void DrawGameOverScreen(Screen screen, const char *winnerText, int selectedOptio
     DrawText(enterText, screen.width / 2 - MeasureText(enterText, 20) / 2, screen.height - 50, 20, LIGHTGRAY);
 }
 
+void gameSetup(Game *game, Screen screen) {
+    game->player.score = 0;
+    game->player.lives = 3;
+    game->player = Paddle_Init(30, screen.height / 1.0f - 30, 10);
+    game->ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
+    game->level = 1;
+    CreateLevel(game->bricks, &game->brickCount, screen, game->level);
+    game->state = PLAYING;
+}
+
+// ========= Main Game Loop =============
 int main(void) {
     Screen screen = { 800, 450 };
 
@@ -396,9 +551,11 @@ int main(void) {
     InitAudioDevice();
 
     // Load sounds
-    const Sound paddleHit = LoadSound("assets/paddle_hit.wav");
-    const Sound wallHit = LoadSound("assets/wall_hit.wav");
-    const Sound scoreSound = LoadSound("assets/score.wav");
+    const Sound selectSound = LoadSound("assets/select.wav");
+    const Sound paddleHit = LoadSound("assets/bounce.wav");
+    const Sound wallHit = LoadSound("assets/bounce.wav");
+    const Sound dieSound = LoadSound("assets/death.wav");
+    const Sound brickHit = LoadSound("assets/hit.wav");
 
     // Initialize game
     Game game = Game_Init(screen);
@@ -411,9 +568,11 @@ int main(void) {
         if (game.state == MENU || game.state == PAUSED || game.state == GAME_OVER) {
             int menuCount = GetCurrentMenuOptionCount(game.state);
             if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+                PlaySound(selectSound);
                 game.selectedMenuOption = (game.selectedMenuOption + 1) % menuCount;
             }
             if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+                PlaySound(selectSound);
                 game.selectedMenuOption = (game.selectedMenuOption - 1 + menuCount) % menuCount;
             }
 
@@ -423,29 +582,39 @@ int main(void) {
 
             if (IsKeyPressed(KEY_ENTER)) {
                 MenuAction action = GetMenuAction(game.state, game.selectedMenuOption);
+                game.selectedMenuOption = 0;
+
                 if (action == MENU_ACTION_QUIT) {
                     shouldExit = 1;
                 } else if (action == MENU_ACTION_START) {
-                    game.state = PLAYING;
+                    gameSetup(&game, screen);
                 } else if (action == MENU_ACTION_RESUME) {
                     game.state = PLAYING;
                 } else if (action == MENU_ACTION_MAIN_MENU) {
                     game.state = MENU;
-                    game.selectedMenuOption = 0;
                 } else if (action == MENU_ACTION_PLAY_AGAIN) {
-                    game.player.score = 0;
-                    game.player.lives = 3;
-                    game.player = Paddle_Init(30, screen.height / 1.0f - 30, 10);
-                    game.state = PLAYING;
-                    game.ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
+                    gameSetup(&game, screen);
                 } else if (action == MENU_ACTION_MAIN_MENU) {
                     game.state = MENU;
-                    game.selectedMenuOption = 0;
                 }
             }
 
             if (shouldExit) break;
         } else if (game.state == PLAYING) {
+            // DEV CHEAT FOR TESTING
+            if (IsKeyPressed(KEY_F1)) {
+                for (int i = 0; i < game.brickCount; i++) {
+                    game.bricks[i].active = false;
+                }
+            }
+            if (IsKeyPressed(KEY_F2)) {
+                game.player.rect.width = 300;
+            }
+            if (IsKeyPressed(KEY_F3)) {
+                game.player.rect.width = 80;
+            }
+
+
             if (IsKeyPressed(KEY_ESCAPE)) {
                 game.state = PAUSED;
                 game.selectedMenuOption = 0;
@@ -453,6 +622,7 @@ int main(void) {
 
             // Update paddles
             Paddle_UpdatePlayer(&game.player, screen);
+            UpdateBricks(game.bricks, game.brickCount, GetFrameTime(), &game.player);
 
             // Ball attached to paddle (serve mode)
             if (game.ball.attached) {
@@ -464,7 +634,7 @@ int main(void) {
             } 
             else {
                 // Normal ball movement
-                int wallBounce = Ball_Update(&game.ball, screen, &game.player, &game.state);
+                int wallBounce = Ball_Update(&game.ball, screen, &game.player, &game.state, dieSound);
                 if (wallBounce) {
                     PlaySound(wallHit);
                 }
@@ -473,7 +643,7 @@ int main(void) {
                 Ball_CheckPaddleCollision(&game.ball, &game.player, &paddleHit, 1);
 
                 // Brick collisions
-                CheckBrickCollisions(&game.ball, game.bricks, game.brickCount, scoreSound);
+                CheckBrickCollisions(&game.ball, game.bricks, game.brickCount, brickHit );
             }
 
             // Check if all bricks are destroyed
@@ -486,14 +656,18 @@ int main(void) {
             }
 
             if (allBricksCleared) {
-                game.state = GAME_OVER;
-                // You can add a "Level Complete" message later
+                // Level complete logic
+                game.player.score += 100 * game.level;
+                game.player.lives++;
+                game.level++;
+                game.ball.attached = true;
+                CreateLevel(game.bricks, &game.brickCount, screen, game.level);
             }
         }
 
         // === DRAW ===
         BeginDrawing();
-            ClearBackground(DARKBLUE);
+            ClearBackground((Color){ 5, 5, 60, 255 });
 
             if (game.state == MENU) {
                 DrawMainMenuScreen(screen, game.selectedMenuOption, 0);
@@ -515,7 +689,8 @@ int main(void) {
     // Cleanup
     UnloadSound(paddleHit);
     UnloadSound(wallHit);
-    UnloadSound(scoreSound);
+    UnloadSound(brickHit);
+    UnloadSound(selectSound);
     CloseAudioDevice();
     CloseWindow();
 
