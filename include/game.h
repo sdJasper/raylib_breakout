@@ -18,12 +18,14 @@ typedef struct {
     float accel;
     float responseMagnitude;
     bool attached;
+    int bounceCount;
 } Ball;
 
 typedef struct {
     Rectangle rect;
     int moveSpeed;
     int score;
+    int next;
     int lives;
 } Paddle;
 

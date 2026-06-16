@@ -66,7 +66,7 @@ void CreateLevel(Brick bricks[], int *brickCount, Screen screen, int level) {
             };
             b->active = true;
             b->hitPoints = rowHP;
-            b->color = currentPalette[row % 6];
+            b->color = currentPalette[row % 6];;
             b->destroying = false;
             b->destroyTimer = 0.0f;
             (*brickCount)++;
@@ -82,6 +82,7 @@ int CheckBrickCollisions(Ball *ball, Brick bricks[], int brickCount, Sound hitSo
         
         if (CheckCollisionCircleRec(ball->pos, ball->radius, bricks[i].rect)) {
             bricks[i].hitPoints--;
+            ball->bounceCount++;
             
             if (bricks[i].hitPoints <= 0 && !bricks[i].destroying) {
                 bricks[i].destroying = true;
@@ -202,6 +203,7 @@ Ball Ball_Init(Screen screen, float initialSpeed, float accel, float responseMag
     ball.accel = accel;
     ball.responseMagnitude = responseMagnitude;
     ball.attached = true;
+    ball.bounceCount = 0;
     return ball;
 }
 
@@ -217,6 +219,7 @@ Paddle Paddle_Init(float x, float y, int moveSpeed) {
     paddle.rect = (Rectangle){ x, y, 80, 16 };
     paddle.moveSpeed = moveSpeed;
     paddle.score = 0;
+    paddle.next = 1000;
     paddle.lives = 3;
     return paddle;
 }
@@ -228,7 +231,7 @@ Game Game_Init(Screen screen) {
     
     int paddleMargin = 25;
     game.player = Paddle_Init(paddleMargin, screen.height / 1.0f - 30, 10);
-    game.level = 1;
+    game.level = 0;
     game.selectedMenuOption = 0;
     return game;
 }
@@ -278,15 +281,16 @@ void Paddle_UpdatePlayer(Paddle *paddle, Screen screen) {
         paddle->rect.x = screen.width - paddle->rect.width;
 }
 
-void UpdateBricks(Brick bricks[], int brickCount, float deltaTime, Paddle *paddle) {
-    for (int i = 0; i < brickCount; i++) {
-        if (bricks[i].destroying) {
-            bricks[i].destroyTimer -= deltaTime;
+void UpdateBricks(Game *game, float deltaTime) {
+    for (int i = 0; i < game->brickCount; i++) {
+        if (game->bricks[i].destroying) {
+            game->bricks[i].destroyTimer -= deltaTime;
             
-            if (bricks[i].destroyTimer <= 0.0f) {
-                bricks[i].active = false;
-                bricks[i].destroying = false;
-                paddle->score += 10;
+            if (game->bricks[i].destroyTimer <= 0.0f) {
+                game->bricks[i].active = false;
+                game->bricks[i].destroying = false;
+                int row = 6 - (i / 12);
+                game->player.score += row * (game->level) + (game->ball.bounceCount);
             }
         }
     }
@@ -316,6 +320,7 @@ void Ball_Launch(Ball *ball) {
 // ===== COLLISION & SCORING =====
 void Ball_CheckPaddleCollision(Ball *ball, Paddle *paddle, const Sound *hitSound, int isPlayerSide) {
     if (CheckCollisionCircleRec(ball->pos, ball->radius, paddle->rect)) {
+        ball->bounceCount = 0; // reset on paddle hit
         float relativeHit = (ball->pos.x - (paddle->rect.x + paddle->rect.width / 2)) / (paddle->rect.width / 2);
         float maxAngle = 60 * DEG2RAD;
         float angle = relativeHit * maxAngle;
@@ -340,48 +345,32 @@ void DrawCircleShadow(Vector2 center, float radius, Color shadowColor, int offse
 }
 
 void DrawBricks(Brick bricks[], int brickCount) {
-    ArmorStyle armorStyles[4] = {
-        { BLANK, BLANK, BLANK, 0 },
-        { WHITE, BLANK, Fade(WHITE, 0.3f), 3 },
-        { GRAY, LIGHTGRAY, Fade(WHITE, 0.25f), 5 },
-        { GOLD, YELLOW, Fade(WHITE, 0.35f), 5 }
-    };
-
     for (int i = 0; i < brickCount; i++) {
         if (!bricks[i].active) continue;
 
         int hp = bricks[i].hitPoints;
         Color baseColor = bricks[i].color;
 
+        float alpha = (float)hp * 85.0f;
         if (bricks[i].destroying) {
-            if ((int)(bricks[i].destroyTimer * 20) % 2 == 0) {
-                armorStyles[1].base = WHITE;
+            if ((int)(bricks[i].destroyTimer * 60) % 2 == 0) {
+                baseColor = WHITE;
+                alpha = 255.0f;
             }
         }
 
         DrawShadow(bricks[i].rect, SHADOW_COLOR, SHADOW_OFFSET);
-        
-        ArmorStyle style = armorStyles[hp];
-        if (hp == 1) style.base = baseColor;
-
-        DrawRectangleRec(bricks[i].rect, style.base);
+        baseColor.a = (unsigned char)alpha;
+        DrawRectangleRec(bricks[i].rect, baseColor);
 
         if (hp > 1) {
-            Rectangle inner = {
-                bricks[i].rect.x + 3,
-                bricks[i].rect.y + 3,
-                bricks[i].rect.width -6,
-                bricks[i].rect.height - 6
-            };
-            DrawRectangleRec(inner, style.highlight);
-            
             DrawRectangle(
                 bricks[i].rect.x + 4, bricks[i].rect.y + 4, 
-                bricks[i].rect.width - 12, 6, Fade(WHITE, 0.4f)
+                bricks[i].rect.width - 12, 6, Fade(baseColor, 0.4f)
             );
         }
 
-        DrawRectangleLinesEx(bricks[i].rect, style.borderThickness, style.border);
+        DrawRectangleLinesEx(bricks[i].rect, hp, Fade(WHITE, 0.3f));
     }
 }
 
@@ -404,6 +393,56 @@ void DrawStar(Vector2 center, float radius, Color color) {
     }
 }
 
+void DrawDragonSpiralBackground(Screen screen, float time, int level) {
+    Vector2 center = { screen.width * 0.5f, screen.height * 0.5f };
+    const int steps = 120;
+    const int arms = 1 + (level % 4);
+    const float baseAngle = time * 0.35f + level * 0.52f;
+    const float radiusScale = 7.6f + level * 0.9f;
+    const float wobble = 14.0f + (level % 3) * 6.0f;
+
+    Color palette[5] = {
+        Fade((Color){ 30, 75, 140, 255 }, 0.14f),
+        Fade((Color){ 75, 145, 210, 255 }, 0.12f),
+        Fade((Color){ 120, 190, 230, 255 }, 0.10f),
+        Fade((Color){ 170, 110, 225, 255 }, 0.09f),
+        Fade((Color){ 235, 165, 60, 255 }, 0.08f)
+    };
+
+    for (int a = 0; a < arms; a++) {
+        Vector2 prev = center;
+        float armOffset = a * DEG2RAD * (360.0f / arms);
+
+        for (int i = 0; i < steps; i++) {
+            float t = i / (float)steps;
+            float angle = i * (0.38f + level * 0.02f) + baseAngle + armOffset;
+            float radius = powf((float)i + 1.0f, 0.92f) * radiusScale * (0.8f + a * 0.05f);
+            float warp = sinf(i * 0.37f + level * 0.9f) * 0.62f;
+            float x = center.x + cosf(angle) * radius + sinf(angle * (1.5f + a * 0.18f)) * wobble * warp;
+            float y = center.y + sinf(angle) * radius + cosf(angle * (1.2f + a * 0.14f)) * wobble * warp;
+            Vector2 point = { x, y };
+
+            Color lineColor = Fade(palette[(a + i / 24) % 5], 0.07f + t * 0.08f);
+            DrawLineEx(prev, point, 1.6f - a * 0.15f, lineColor);
+
+            if (i % 10 == 0) {
+                float dotRadius = 1.9f + fabsf(sinf(time * 3.6f + i * 0.18f)) * 1.2f;
+                DrawCircleV(point, dotRadius, lineColor);
+            }
+
+            prev = point;
+        }
+    }
+
+    for (int j = 0; j < 7; j++) {
+        float ringAngle = time * (0.18f + level * 0.02f) + j * DEG2RAD * 55.0f + level * 0.14f;
+        float ringRadius = screen.height * 0.32f + sinf(time * 0.42f + j + level * 0.3f) * 18.0f + level * 3.8f;
+        Vector2 ringPoint = { center.x + cosf(ringAngle) * ringRadius, center.y + sinf(ringAngle) * ringRadius };
+        DrawCircleV(ringPoint, 8.0f, Fade(WHITE, 0.05f));
+        DrawLineEx(center, ringPoint, 0.8f, Fade(WHITE, 0.04f));
+    }
+}
+
 void DrawGameScene(Game *game, Screen screen, int scoreTextOffsetX) {
     // Draw Shadows first:
     // DrawShadow(game->player.rect, SHADOW_COLOR, SHADOW_OFFSET);
@@ -412,16 +451,18 @@ void DrawGameScene(Game *game, Screen screen, int scoreTextOffsetX) {
     playerShadow.y += SHADOW_OFFSET;
     DrawRectangleRounded(playerShadow, 0.6f, 8, SHADOW_COLOR);
     DrawCircleShadow(game->ball.pos, game->ball.radius, SHADOW_COLOR, SHADOW_OFFSET);
-    // Draw lives
-    for (int i = 0; i < game->player.lives; i++) {
+    // Draw EXTRA lives
+    for (int i = 1; i < game->player.lives; i++) {
         DrawCircleShadow((Vector2){ 30 + i * 25, 30 }, game->ball.radius, SHADOW_COLOR, SHADOW_OFFSET);
         DrawCircle(30 + i * 25, 30, 8, WHITE);
     }
     DrawText(TextFormat("%i", game->player.score), screen.width / 2 - scoreTextOffsetX, 15, 50, WHITE);
+    DrawText(TextFormat("Next: %i", game->player.next), screen.width / 2 + scoreTextOffsetX + 20, 15, 20, WHITE);
 
     // draw the rest of the game elements
     DrawBricks(game->bricks, game->brickCount);
-    DrawRectangleRounded(game->player.rect, 0.6f, 8, WHITE);
+    Color paddleColor = { 255, 255, 255, 75 };
+    DrawRectangleRounded(game->player.rect, 0.6f, 8, paddleColor);
     DrawRectangleRoundedLinesEx(game->player.rect, 0.75f, 12, 3, DARKGRAY);
     DrawCircleV(game->ball.pos, game->ball.radius, RAYWHITE);
 }
@@ -459,7 +500,7 @@ void DrawPauseScreen(Screen screen, int selectedOption) {
     DrawText(resumeText, screen.width / 2 - MeasureText(resumeText, 20) / 2, screen.height - 40, 20, LIGHTGRAY);
 }
 
-void DrawMainMenuScreen(Screen screen, int selectedOption, int difficultyLevel) {
+void DrawMainMenuScreen(Screen screen, int selectedOption) {
     const char *titleText = "Breakout!!!";
     int menuCount;
     const char **menuItems = GetMenuItems(MENU, &menuCount);
@@ -481,16 +522,6 @@ void DrawMainMenuScreen(Screen screen, int selectedOption, int difficultyLevel) 
             DrawText(menuItems[i], textX, textY, menuFontSize, BLACK);
         } else {
             DrawText(menuItems[i], textX, textY, menuFontSize, WHITE);
-        }
-
-        if (i == 2) {
-            float starRadius = 8.0f;
-            float starY = textY + menuFontSize / 2.0f;
-            float startX = textX + textWidth + 16.0f + starRadius;
-            for (int starIndex = 0; starIndex <= difficultyLevel; starIndex++) {
-                Vector2 starCenter = { startX + starIndex * (starRadius * 2.5f), starY };
-                DrawStar(starCenter, starRadius, WHITE);
-            }
         }
     }
 
@@ -531,8 +562,6 @@ void DrawGameOverScreen(Screen screen, const char *winnerText, int selectedOptio
 }
 
 void gameSetup(Game *game, Screen screen) {
-    game->player.score = 0;
-    game->player.lives = 3;
     game->player = Paddle_Init(30, screen.height / 1.0f - 30, 10);
     game->ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
     game->level = 1;
@@ -560,6 +589,7 @@ int main(void) {
     // Initialize game
     Game game = Game_Init(screen);
     const int scoreTextOffsetX = 60;
+    int nextInflation = 100;
 
     while (!WindowShouldClose()) {
         int shouldExit = 0;
@@ -601,6 +631,11 @@ int main(void) {
 
             if (shouldExit) break;
         } else if (game.state == PLAYING) {
+            if (game.player.score >= game.player.next) {
+                game.player.lives++;
+                game.player.next += 1000 + nextInflation;
+                nextInflation = nextInflation * 2;
+            }
             // DEV CHEAT FOR TESTING
             if (IsKeyPressed(KEY_F1)) {
                 for (int i = 0; i < game.brickCount; i++) {
@@ -608,7 +643,7 @@ int main(void) {
                 }
             }
             if (IsKeyPressed(KEY_F2)) {
-                game.player.rect.width = 300;
+                game.player.rect.width += 100;
             }
             if (IsKeyPressed(KEY_F3)) {
                 game.player.rect.width = 80;
@@ -622,7 +657,7 @@ int main(void) {
 
             // Update paddles
             Paddle_UpdatePlayer(&game.player, screen);
-            UpdateBricks(game.bricks, game.brickCount, GetFrameTime(), &game.player);
+            UpdateBricks(&game, GetFrameTime());
 
             // Ball attached to paddle (serve mode)
             if (game.ball.attached) {
@@ -658,9 +693,9 @@ int main(void) {
             if (allBricksCleared) {
                 // Level complete logic
                 game.player.score += 100 * game.level;
-                game.player.lives++;
                 game.level++;
                 game.ball.attached = true;
+                game.ball.speed = 6.0f + (game.level * 0.25f);
                 CreateLevel(game.bricks, &game.brickCount, screen, game.level);
             }
         }
@@ -668,9 +703,10 @@ int main(void) {
         // === DRAW ===
         BeginDrawing();
             ClearBackground((Color){ 5, 5, 60, 255 });
+            DrawDragonSpiralBackground(screen, (float)GetTime(), game.level);
 
             if (game.state == MENU) {
-                DrawMainMenuScreen(screen, game.selectedMenuOption, 0);
+                DrawMainMenuScreen(screen, game.selectedMenuOption);
             }
 
             if (game.state == PLAYING || game.state == PAUSED) {
