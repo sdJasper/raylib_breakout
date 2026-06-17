@@ -52,19 +52,23 @@ void AddHighScore(HighScoreList *list, const char *name, int score) {
 
 void UpdateNameInput(char *name, int *nameLength, bool *finished) {
     *finished = false;
-    
-    // Backspace
-    if (IsKeyPressed(KEY_BACKSPACE) && *nameLength > 0) {
-        (*nameLength)--;
-        name[*nameLength] = '\0';
+
+    // Backspace with repeat
+    if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyDown(KEY_BACKSPACE)) && *nameLength > 0) {
+        static float backspaceTimer = 0.0f;
+        backspaceTimer += GetFrameTime();
+        if (backspaceTimer > 0.15f) {   // repeat speed
+            (*nameLength)--;
+            name[*nameLength] = '\0';
+            backspaceTimer = 0.08f;     // faster repeat
+        }
     }
-    
-    // Enter to finish
+
     if (IsKeyPressed(KEY_ENTER) && *nameLength > 0) {
         *finished = true;
         return;
     }
-    
+
     // Add letters
     for (int key = KEY_A; key <= KEY_Z; key++) {
         if (IsKeyPressed(key)) {
@@ -92,11 +96,13 @@ Ball Ball_Init(Screen screen, float initialSpeed, float accel, float responseMag
     return ball;
 }
 
-Paddle Paddle_Init(float x, float y, int moveSpeed) {
+Paddle Paddle_Init(float x, float y) {
     Paddle paddle;
     paddle.rect = (Rectangle){ x, y, 80, 16 };
-    paddle.moveSpeed = moveSpeed;
+    paddle.moveSpeed = 3.0f;
+    paddle.maxSpeed = 15.0f;
     paddle.lives = 3;
+    paddle.accel = 1.0f;
     return paddle;
 }
 
@@ -106,7 +112,7 @@ Game Game_Init(Screen screen) {
     game.ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
     
     int paddleMargin = 25;
-    game.player = Paddle_Init(paddleMargin, screen.height / 1.0f - 30, 10);
+    // game.player = Paddle_Init(paddleMargin, screen.height / 1.0f - 30);
     game.level = 0;
     game.selectedMenuOption = 0;
     game.score = 0;
@@ -185,7 +191,7 @@ void CreateLevel(Brick bricks[], int *brickCount, Screen screen, int level) {
 }
 
 void GameSetup(Game *game, Screen screen) {
-    game->player = Paddle_Init(30, screen.height / 1.0f - 30, 10);
+    game->player = Paddle_Init(30, screen.height / 1.0f - 30);
     game->ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
     game->level = 1;
     CreateLevel(game->bricks, &game->brickCount, screen, game->level);
@@ -286,8 +292,17 @@ int Ball_Update(Ball *ball, Screen screen, Paddle *paddle, GameState *state, Sou
 }
 
 void Paddle_UpdatePlayer(Paddle *paddle, Screen screen) {
-    if (IsKeyDown(KEY_LEFT)) paddle->rect.x -= paddle->moveSpeed;
-    if (IsKeyDown(KEY_RIGHT)) paddle->rect.x += paddle->moveSpeed;
+    if (IsKeyDown(KEY_LEFT)) {
+        paddle->moveSpeed = fmin(paddle->moveSpeed+paddle->accel, paddle->maxSpeed);
+        paddle->rect.x -= paddle->moveSpeed;
+    }
+    if (IsKeyDown(KEY_RIGHT)) {
+        paddle->moveSpeed = fmin(paddle->moveSpeed+paddle->accel, paddle->maxSpeed);
+        paddle->rect.x += paddle->moveSpeed;
+    }
+    if (IsKeyUp(KEY_LEFT) && IsKeyUp(KEY_RIGHT)) {
+        paddle->moveSpeed = 3.0f; // min move speed
+    }
 
     if (paddle->rect.x < 0) paddle->rect.x = 0;
     if (paddle->rect.x + paddle->rect.width > screen.width)
@@ -634,12 +649,11 @@ void DrawGameOverScreen(Screen screen, int selectedOption) {
 }
 
 void DrawEnterName(Screen screen, Game *game) {
-    BeginDrawing();
     ClearBackground(DARKBLUE);
-    
-    DrawText("NEW HIGH SCORE!", screen.width/2 - MeasureText("NEW HIGH SCORE!", 50)/2, 80, 50, YELLOW);
-    
-    DrawText("ENTER YOUR NAME:", screen.width/2 - MeasureText("ENTER YOUR NAME:", 30)/2, 160, 30, WHITE);
+    const char *textA = "NEW HIGH SCORE!";
+    DrawText(textA, screen.width/2 - MeasureText(textA, 50)/2, 80, 50, YELLOW);
+    const char *textB = "ENTER YOUR NAME:";
+    DrawText(textB, screen.width/2 - MeasureText(textB, 30)/2, 160, 30, WHITE);
     
     // Name input box
     Rectangle inputBox = { screen.width/2 - 120, 220, 240, 60 };
@@ -649,16 +663,13 @@ void DrawEnterName(Screen screen, Game *game) {
     // Current name being typed
     DrawText(game->playerName, screen.width/2 - MeasureText(game->playerName, 40)/2, 235, 40, RAYWHITE);
     
-    DrawText("Press ENTER to confirm", screen.width/2 - MeasureText("Press ENTER to confirm", 20)/2, 310, 20, LIGHTGRAY);
-    DrawText("(A-Z only, max 8 characters)", screen.width/2 - MeasureText("(A-Z only, max 8 characters)", 18)/2, 340, 18, GRAY);
-    
-    EndDrawing();
+    const char *textC = "Press ENTER to confirm";
+    DrawText(textC, screen.width/2 - MeasureText(textC, 20)/2, 310, 20, LIGHTGRAY);
+    const char *textD = "(A-Z only, max 8 characters)";
+    DrawText(textD, screen.width/2 - MeasureText(textD, 18)/2, 340, 18, GRAY);
 }
 
 void DrawHighScores(Screen screen, HighScoreList *list) {
-    BeginDrawing();
-    // ClearBackground(DARKBLUE);
-
     const char *titleText = "HIGH SCORES";
     const int titleFontSize = 60;
     const int titleY = screen.height / 20;
@@ -678,8 +689,6 @@ void DrawHighScores(Screen screen, HighScoreList *list) {
     }
     
     DrawText("Press ENTER or ESC to return", screen.width/2 - MeasureText("Press ENTER or ESC to return", 20)/2, screen.height - 50, 20, LIGHTGRAY);
-    
-    EndDrawing();
 }
 
 

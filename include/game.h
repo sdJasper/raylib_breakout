@@ -25,7 +25,9 @@ typedef struct {
 
 typedef struct {
     Rectangle rect;
-    int moveSpeed;
+    float moveSpeed;
+    float accel;
+    float maxSpeed;
     int lives;
 } Paddle;
 
