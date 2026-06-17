@@ -10,6 +10,116 @@
 #define SHADOW_OFFSET 8
 #define SHADOW_COLOR (Color){ 0, 0, 0, 120 }
 
+
+// ===== SCORING =====
+void LoadHighScores(HighScoreList *list) {
+    FILE *file = fopen("highscores.dat", "rb");
+    if (file) {
+        fread(list, sizeof(HighScoreList), 1, file);
+        fclose(file);
+    } else {
+        list->count = 0;
+    }
+}
+
+void SaveHighScores(HighScoreList *list) {
+    FILE *file = fopen("highscores.dat", "wb");
+    if (file) {
+        fwrite(list, sizeof(HighScoreList), 1, file);
+        fclose(file);
+    }
+}
+
+void AddHighScore(HighScoreList *list, const char *name, int score) {
+    // Insert in sorted order
+    int i = list->count - 1;
+    while (i >= 0 && list->scores[i].score < score) {
+        if (i + 1 < MAX_HIGHSCORES)
+            list->scores[i + 1] = list->scores[i];
+        i--;
+    }
+    
+    int insertPos = i + 1;
+    if (insertPos < MAX_HIGHSCORES) {
+        strncpy(list->scores[insertPos].name, name, MAX_NAME_LENGTH);
+        list->scores[insertPos].name[MAX_NAME_LENGTH] = '\0';
+        list->scores[insertPos].score = score;
+        
+        if (list->count < MAX_HIGHSCORES)
+            list->count++;
+    }
+}
+
+void UpdateNameInput(char *name, int *nameLength, bool *finished) {
+    *finished = false;
+    
+    // Backspace
+    if (IsKeyPressed(KEY_BACKSPACE) && *nameLength > 0) {
+        (*nameLength)--;
+        name[*nameLength] = '\0';
+    }
+    
+    // Enter to finish
+    if (IsKeyPressed(KEY_ENTER) && *nameLength > 0) {
+        *finished = true;
+        return;
+    }
+    
+    // Add letters
+    for (int key = KEY_A; key <= KEY_Z; key++) {
+        if (IsKeyPressed(key)) {
+            if (*nameLength < MAX_NAME_LENGTH) {
+                name[*nameLength] = (char)key;
+                (*nameLength)++;
+                name[*nameLength] = '\0';
+            }
+        }
+    }
+}
+
+
+// ===== INITIALIZATION =====
+Ball Ball_Init(Screen screen, float initialSpeed, float accel, float responseMagnitude) {
+    Ball ball;
+    ball.pos = (Vector2){ screen.width / 2.0f, screen.height / 2.0f };
+    ball.vel = (Vector2){ 0.0f, -initialSpeed };
+    ball.radius = 8;
+    ball.speed = initialSpeed;
+    ball.accel = accel;
+    ball.responseMagnitude = responseMagnitude;
+    ball.attached = true;
+    ball.bounceCount = 0;
+    return ball;
+}
+
+Paddle Paddle_Init(float x, float y, int moveSpeed) {
+    Paddle paddle;
+    paddle.rect = (Rectangle){ x, y, 80, 16 };
+    paddle.moveSpeed = moveSpeed;
+    paddle.lives = 3;
+    return paddle;
+}
+
+Game Game_Init(Screen screen) {
+    Game game;
+    game.state = MENU;
+    game.ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
+    
+    int paddleMargin = 25;
+    game.player = Paddle_Init(paddleMargin, screen.height / 1.0f - 30, 10);
+    game.level = 0;
+    game.selectedMenuOption = 0;
+    game.score = 0;
+    LoadHighScores(&game.highScores);
+    game.playerName[0] = '\0';
+    game.next = 1000;
+    game.nameLength = 0;
+    game.newHighScore = false;
+    return game;
+}
+
+
+// ===== LEVEL CREATION =====
 void CreateLevel(Brick bricks[], int *brickCount, Screen screen, int level) {
     *brickCount = 0;
     const int bricksPerRow = 12;
@@ -74,62 +184,16 @@ void CreateLevel(Brick bricks[], int *brickCount, Screen screen, int level) {
     }
 }
 
-int CheckBrickCollisions(Ball *ball, Brick bricks[], int brickCount, Sound hitSound) {
-    int hitCount = 0;
-    
-    for (int i = 0; i < brickCount; i++) {
-        if (!bricks[i].active) continue;
-        
-        if (CheckCollisionCircleRec(ball->pos, ball->radius, bricks[i].rect)) {
-            bricks[i].hitPoints--;
-            ball->bounceCount++;
-            
-            if (bricks[i].hitPoints <= 0 && !bricks[i].destroying) {
-                bricks[i].destroying = true;
-                bricks[i].destroyTimer = 0.12f;
-            }
-
-            // === PITCH VARIATION BASED ON BRICK HEIGHT ===
-            float pitch = 1.0f;
-            
-            pitch = 0.8f + (bricks[i].rect.y / 400.0f);   // Adjust divisor based on your screen size
-            
-            // Clamp pitch (recommended range: 0.5 to 2.0)
-            if (pitch < 0.6f) pitch = 0.6f;
-            if (pitch > 1.8f) pitch = 1.8f;
-
-            SetSoundPitch(hitSound, pitch);
-            PlaySound(hitSound);
-
-            // === IMPROVED COLLISION RESPONSE ===
-            float overlapLeft   = (ball->pos.x + ball->radius) - bricks[i].rect.x;
-            float overlapRight  = (bricks[i].rect.x + bricks[i].rect.width) - (ball->pos.x - ball->radius);
-            float overlapTop    = (ball->pos.y + ball->radius) - bricks[i].rect.y;
-            float overlapBottom = (bricks[i].rect.y + bricks[i].rect.height) - (ball->pos.y - ball->radius);
-
-            // Find the smallest overlap (this is the side we hit)
-            float minOverlap = fminf(fminf(overlapLeft, overlapRight), fminf(overlapTop, overlapBottom));
-
-            if (minOverlap == overlapTop || minOverlap == overlapBottom) {
-                // Hit top or bottom of brick → reverse vertical velocity
-                ball->vel.y *= -1;
-            } else {
-                // Hit left or right of brick → reverse horizontal velocity
-                ball->vel.x *= -1;
-            }
-
-            hitCount++;
-
-            // Push ball out to prevent sticking
-            if (minOverlap == overlapLeft)   ball->pos.x -= minOverlap + 1;
-            if (minOverlap == overlapRight)  ball->pos.x += minOverlap + 1;
-            if (minOverlap == overlapTop)    ball->pos.y -= minOverlap + 1;
-            if (minOverlap == overlapBottom) ball->pos.y += minOverlap + 1;
-        }
-    }
-    return hitCount;
+void GameSetup(Game *game, Screen screen) {
+    game->player = Paddle_Init(30, screen.height / 1.0f - 30, 10);
+    game->ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
+    game->level = 1;
+    CreateLevel(game->bricks, &game->brickCount, screen, game->level);
+    game->state = PLAYING;
 }
 
+
+// ===== MENU FUNCTIONS =====
 const char **GetMenuItems(GameState state, int *outCount) {
     static const char *mainMenuItems[] = { "Start", "Quit" };
     static const char *pauseMenuItems[] = { "Resume", "Main Menu", "Quit" };
@@ -150,15 +214,6 @@ const char **GetMenuItems(GameState state, int *outCount) {
             return NULL;
     }
 }
-
-typedef enum {
-    MENU_ACTION_NONE,
-    MENU_ACTION_START,
-    MENU_ACTION_QUIT,
-    MENU_ACTION_RESUME,
-    MENU_ACTION_PLAY_AGAIN,
-    MENU_ACTION_MAIN_MENU
-} MenuAction;
 
 MenuAction GetMenuAction(GameState state, int selectedOption) {
     switch (state) {
@@ -193,48 +248,6 @@ int GetCurrentMenuOptionCount(GameState state) {
     return count;
 }
 
-// ===== INITIALIZATION =====
-Ball Ball_Init(Screen screen, float initialSpeed, float accel, float responseMagnitude) {
-    Ball ball;
-    ball.pos = (Vector2){ screen.width / 2.0f, screen.height / 2.0f };
-    ball.vel = (Vector2){ 0.0f, -initialSpeed };
-    ball.radius = 8;
-    ball.speed = initialSpeed;
-    ball.accel = accel;
-    ball.responseMagnitude = responseMagnitude;
-    ball.attached = true;
-    ball.bounceCount = 0;
-    return ball;
-}
-
-/**
- * Initialize a new paddle.
- * @param x The x-coordinate of the paddle's top-left corner.
- * @param y The y-coordinate of the paddle's top-left corner.
- * @param moveSpeed The speed at which the paddle can move.
- * @return The initialized paddle.
- */
-Paddle Paddle_Init(float x, float y, int moveSpeed) {
-    Paddle paddle;
-    paddle.rect = (Rectangle){ x, y, 80, 16 };
-    paddle.moveSpeed = moveSpeed;
-    paddle.score = 0;
-    paddle.next = 1000;
-    paddle.lives = 3;
-    return paddle;
-}
-
-Game Game_Init(Screen screen) {
-    Game game;
-    game.state = MENU;
-    game.ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
-    
-    int paddleMargin = 25;
-    game.player = Paddle_Init(paddleMargin, screen.height / 1.0f - 30, 10);
-    game.level = 0;
-    game.selectedMenuOption = 0;
-    return game;
-}
 
 // ===== UPDATE =====
 int Ball_Update(Ball *ball, Screen screen, Paddle *paddle, GameState *state, Sound dieSound) {
@@ -290,7 +303,7 @@ void UpdateBricks(Game *game, float deltaTime) {
                 game->bricks[i].active = false;
                 game->bricks[i].destroying = false;
                 int row = 6 - (i / 12);
-                game->player.score += row * (game->level) + (game->ball.bounceCount);
+                game->score += row * (game->level) + (game->ball.bounceCount);
             }
         }
     }
@@ -317,6 +330,7 @@ void Ball_Launch(Ball *ball) {
     }
 }
 
+
 // ===== COLLISION & SCORING =====
 void Ball_CheckPaddleCollision(Ball *ball, Paddle *paddle, const Sound *hitSound, int isPlayerSide) {
     if (CheckCollisionCircleRec(ball->pos, ball->radius, paddle->rect)) {
@@ -331,6 +345,58 @@ void Ball_CheckPaddleCollision(Ball *ball, Paddle *paddle, const Sound *hitSound
         PlaySound(*hitSound);
     }
 }
+
+void Ball_CheckBrickCollision(Ball *ball, Brick bricks[], int brickCount, Sound hitSound) {
+    for (int i = 0; i < brickCount; i++) {
+        if (!bricks[i].active) continue;
+        
+        if (CheckCollisionCircleRec(ball->pos, ball->radius, bricks[i].rect)) {
+            bricks[i].hitPoints--;
+            ball->bounceCount++;
+            
+            if (bricks[i].hitPoints <= 0 && !bricks[i].destroying) {
+                bricks[i].destroying = true;
+                bricks[i].destroyTimer = 0.12f;
+            }
+
+            // === PITCH VARIATION BASED ON BRICK HEIGHT ===
+            float pitch = 1.0f;
+            
+            pitch = 0.8f + (bricks[i].rect.y / 400.0f);   // Adjust divisor based on your screen size
+            
+            // Clamp pitch (recommended range: 0.5 to 2.0)
+            if (pitch < 0.6f) pitch = 0.6f;
+            if (pitch > 1.8f) pitch = 1.8f;
+
+            SetSoundPitch(hitSound, pitch);
+            PlaySound(hitSound);
+
+            // === IMPROVED COLLISION RESPONSE ===
+            float overlapLeft   = (ball->pos.x + ball->radius) - bricks[i].rect.x;
+            float overlapRight  = (bricks[i].rect.x + bricks[i].rect.width) - (ball->pos.x - ball->radius);
+            float overlapTop    = (ball->pos.y + ball->radius) - bricks[i].rect.y;
+            float overlapBottom = (bricks[i].rect.y + bricks[i].rect.height) - (ball->pos.y - ball->radius);
+
+            // Find the smallest overlap (this is the side we hit)
+            float minOverlap = fminf(fminf(overlapLeft, overlapRight), fminf(overlapTop, overlapBottom));
+
+            if (minOverlap == overlapTop || minOverlap == overlapBottom) {
+                // Hit top or bottom of brick → reverse vertical velocity
+                ball->vel.y *= -1;
+            } else {
+                // Hit left or right of brick → reverse horizontal velocity
+                ball->vel.x *= -1;
+            }
+
+            // Push ball out to prevent sticking
+            if (minOverlap == overlapLeft)   ball->pos.x -= minOverlap + 1;
+            if (minOverlap == overlapRight)  ball->pos.x += minOverlap + 1;
+            if (minOverlap == overlapTop)    ball->pos.y -= minOverlap + 1;
+            if (minOverlap == overlapBottom) ball->pos.y += minOverlap + 1;
+        }
+    }
+}
+
 
 // ===== DRAWING =====
 void DrawShadow(Rectangle rect, Color shadowColor, int offset) {
@@ -435,8 +501,8 @@ void DrawGameScene(Game *game, Screen screen, int scoreTextOffsetX) {
         DrawCircleShadow((Vector2){ 30 + i * 25, 30 }, game->ball.radius, SHADOW_COLOR, SHADOW_OFFSET);
         DrawCircle(30 + i * 25, 30, 8, WHITE);
     }
-    DrawText(TextFormat("%i", game->player.score), screen.width / 2 - scoreTextOffsetX, 15, 50, WHITE);
-    DrawText(TextFormat("Next: %i", game->player.next), screen.width / 2 + scoreTextOffsetX + 20, 15, 20, WHITE);
+    DrawText(TextFormat("%i", game->score), screen.width / 2 - scoreTextOffsetX, 15, 50, WHITE);
+    DrawText(TextFormat("Next: %i", game->next), screen.width / 2 + scoreTextOffsetX + 20, 15, 20, WHITE);
 
     // draw the rest of the game elements
     DrawBricks(game->bricks, game->brickCount);
@@ -514,7 +580,7 @@ void DrawMainMenuScreen(Screen screen, int selectedOption) {
     const int menuSpacing = 50;
     const int menuStartY = 150;
 
-    DrawText(titleText, screen.width / 2 - MeasureText(titleText, 50) / 2, screen.height / 6, 50, YELLOW);
+    DrawText(titleText, screen.width / 2 - MeasureText(titleText, 50) / 2, screen.height / 20, 60, YELLOW);
 
     for (int i = 0; i < menuCount; i++) {
         int textWidth = MeasureText(menuItems[i], menuFontSize);
@@ -537,14 +603,14 @@ void DrawMainMenuScreen(Screen screen, int selectedOption) {
     DrawText(enterText, screen.width / 2 - MeasureText(enterText, 20) / 2, screen.height - 50, 20, LIGHTGRAY);
 }
 
-void DrawGameOverScreen(Screen screen, const char *winnerText, int selectedOption) {
+void DrawGameOverScreen(Screen screen, int selectedOption) {
     int menuCount;
     const char **menuItems = GetMenuItems(GAME_OVER, &menuCount);
     const int menuStartY = 220;
     const int menuSpacing = 50;
     const int menuFontSize = 32;
-
-    DrawText(winnerText, screen.width / 2 - MeasureText(winnerText, 40) / 2, 150, 40, YELLOW);
+    const char *text = "GAME OVER";
+    DrawText(text, screen.width / 2 - MeasureText(text, 40) / 2, 150, 40, YELLOW);
 
     for (int i = 0; i < menuCount; i++) {
         int textWidth = MeasureText(menuItems[i], menuFontSize);
@@ -567,15 +633,57 @@ void DrawGameOverScreen(Screen screen, const char *winnerText, int selectedOptio
     DrawText(enterText, screen.width / 2 - MeasureText(enterText, 20) / 2, screen.height - 50, 20, LIGHTGRAY);
 }
 
-void gameSetup(Game *game, Screen screen) {
-    game->player = Paddle_Init(30, screen.height / 1.0f - 30, 10);
-    game->ball = Ball_Init(screen, 6.0f, 1.0f, 6.0f);
-    game->level = 1;
-    CreateLevel(game->bricks, &game->brickCount, screen, game->level);
-    game->state = PLAYING;
+void DrawEnterName(Screen screen, Game *game) {
+    BeginDrawing();
+    ClearBackground(DARKBLUE);
+    
+    DrawText("NEW HIGH SCORE!", screen.width/2 - MeasureText("NEW HIGH SCORE!", 50)/2, 80, 50, YELLOW);
+    
+    DrawText("ENTER YOUR NAME:", screen.width/2 - MeasureText("ENTER YOUR NAME:", 30)/2, 160, 30, WHITE);
+    
+    // Name input box
+    Rectangle inputBox = { screen.width/2 - 120, 220, 240, 60 };
+    DrawRectangleRec(inputBox, Fade(BLACK, 0.7f));
+    DrawRectangleLinesEx(inputBox, 4, WHITE);
+    
+    // Current name being typed
+    DrawText(game->playerName, screen.width/2 - MeasureText(game->playerName, 40)/2, 235, 40, RAYWHITE);
+    
+    DrawText("Press ENTER to confirm", screen.width/2 - MeasureText("Press ENTER to confirm", 20)/2, 310, 20, LIGHTGRAY);
+    DrawText("(A-Z only, max 8 characters)", screen.width/2 - MeasureText("(A-Z only, max 8 characters)", 18)/2, 340, 18, GRAY);
+    
+    EndDrawing();
 }
 
-// ========= Main Game Loop =============
+void DrawHighScores(Screen screen, HighScoreList *list) {
+    BeginDrawing();
+    // ClearBackground(DARKBLUE);
+
+    const char *titleText = "HIGH SCORES";
+    const int titleFontSize = 60;
+    const int titleY = screen.height / 20;
+    DrawText(titleText, screen.width/2 - MeasureText(titleText, titleFontSize)/2, titleY, titleFontSize, GOLD);
+    
+    for (int i = 0; i < list->count; i++) {
+        Color textColor = (i == 0) ? YELLOW : WHITE;
+        int y = 100 + i * 30;
+        
+        DrawText(TextFormat("%d.", i+1), 180, y, 25, textColor);
+        DrawText(list->scores[i].name, 260, y, 25, textColor);
+        DrawText(TextFormat("%d", list->scores[i].score), screen.width - 280, y, 25, textColor);
+    }
+    
+    if (list->count == 0) {
+        DrawText("No scores yet!", screen.width/2 - MeasureText("No scores yet!", 30)/2, 200, 30, GRAY);
+    }
+    
+    DrawText("Press ENTER or ESC to return", screen.width/2 - MeasureText("Press ENTER or ESC to return", 20)/2, screen.height - 50, 20, LIGHTGRAY);
+    
+    EndDrawing();
+}
+
+
+// ===== Main Game Loop =====
 int main(void) {
     Screen screen = { 800, 450 };
 
@@ -598,18 +706,34 @@ int main(void) {
     Game game = Game_Init(screen);
     const int scoreTextOffsetX = 60;
     int nextInflation = 100;
+    float timer = 0.0f;
+    int returnScreen = 0;
 
     while (!WindowShouldClose()) {
         int shouldExit = 0;
+
+        // Check for new high score
+        if (game.state == GAME_OVER && game.score > 0 && (
+                game.highScores.count < MAX_HIGHSCORES ||
+                game.score > game.highScores.scores[game.highScores.count-1].score)
+        ) {
+            game.state = ENTER_NAME;
+            game.playerName[0] = '\0';
+            game.nameLength = 0;
+            game.newHighScore = true;
+        }
+
 
         // === INPUT & LOGIC ===
         if (game.state == MENU || game.state == PAUSED || game.state == GAME_OVER) {
             int menuCount = GetCurrentMenuOptionCount(game.state);
             if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+                timer = 0.0f;
                 PlaySound(selectSound);
                 game.selectedMenuOption = (game.selectedMenuOption + 1) % menuCount;
             }
             if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+                timer = 0.0f;
                 PlaySound(selectSound);
                 game.selectedMenuOption = (game.selectedMenuOption - 1 + menuCount) % menuCount;
             }
@@ -619,19 +743,20 @@ int main(void) {
             }
 
             if (IsKeyPressed(KEY_ENTER)) {
+                timer = 0.0f;
                 MenuAction action = GetMenuAction(game.state, game.selectedMenuOption);
                 game.selectedMenuOption = 0;
 
                 if (action == MENU_ACTION_QUIT) {
                     shouldExit = 1;
                 } else if (action == MENU_ACTION_START) {
-                    gameSetup(&game, screen);
+                    GameSetup(&game, screen);
                 } else if (action == MENU_ACTION_RESUME) {
                     game.state = PLAYING;
                 } else if (action == MENU_ACTION_MAIN_MENU) {
                     game.state = MENU;
                 } else if (action == MENU_ACTION_PLAY_AGAIN) {
-                    gameSetup(&game, screen);
+                    GameSetup(&game, screen);
                 } else if (action == MENU_ACTION_MAIN_MENU) {
                     game.state = MENU;
                 }
@@ -639,9 +764,9 @@ int main(void) {
 
             if (shouldExit) break;
         } else if (game.state == PLAYING) {
-            if (game.player.score >= game.player.next) {
+            if (game.score >= game.next) {
                 game.player.lives++;
-                game.player.next += 1000 + nextInflation;
+                game.next += 1000 + nextInflation;
                 nextInflation = nextInflation * 2;
             }
             // DEV CHEAT FOR TESTING
@@ -659,7 +784,6 @@ int main(void) {
             if (game.devMode && IsKeyPressed(KEY_F3)) {
                 game.player.rect.width = 80;
             }
-
 
             if (IsKeyPressed(KEY_ESCAPE)) {
                 game.state = PAUSED;
@@ -689,7 +813,7 @@ int main(void) {
                 Ball_CheckPaddleCollision(&game.ball, &game.player, &paddleHit, 1);
 
                 // Brick collisions
-                CheckBrickCollisions(&game.ball, game.bricks, game.brickCount, brickHit );
+                Ball_CheckBrickCollision(&game.ball, game.bricks, game.brickCount, brickHit );
             }
 
             // Check if all bricks are destroyed
@@ -703,11 +827,39 @@ int main(void) {
 
             if (allBricksCleared) {
                 // Level complete logic
-                game.player.score += 100 * game.level;
+                game.score += 100 * game.level;
                 game.level++;
                 game.ball.attached = true;
                 game.ball.speed = 6.0f + (game.level * 0.25f);
                 CreateLevel(game.bricks, &game.brickCount, screen, game.level);
+            }
+        } else if (game.state == ENTER_NAME) {
+            bool finished = false;
+            UpdateNameInput(game.playerName, &game.nameLength, &finished);
+
+            if (finished) {
+                AddHighScore(&game.highScores, game.playerName, game.score);
+                SaveHighScores(&game.highScores);
+                game.score = 0;
+                game.state = GAME_OVER;
+            }
+        }
+
+        // ==== Cycle Menu and High Scores ====
+        if (game.state == MENU || game.state == HIGH_SCORES || game.state == GAME_OVER) {
+            float delta = GetFrameTime();
+            timer += delta;
+            if (timer >= 10.0f) {
+                timer = 0.0f;
+                if (game.state == MENU || game.state == GAME_OVER) {
+                    returnScreen = game.state;
+                    game.state = HIGH_SCORES;
+                } else {
+                    game.state = returnScreen;
+                }
+            }
+            if (game.state == HIGH_SCORES && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_ESCAPE))) {
+                game.state = returnScreen;
             }
         }
 
@@ -731,18 +883,19 @@ int main(void) {
                 ClearBackground((Color){ 5, 5, 60, 255 });
                 DrawDragonSpiralBackground(screen, (float)GetTime(), game.level);
 
-                if (game.state == MENU) {
-                    DrawMainMenuScreen(screen, game.selectedMenuOption);
-                }
-
                 if (game.state == PLAYING || game.state == PAUSED) {
                     DrawGameScene(&game, screen, scoreTextOffsetX);
-
                     if (game.state == PAUSED) {
                         DrawPauseScreen(screen, game.selectedMenuOption);
                     }
+                } else if (game.state == MENU) {
+                    DrawMainMenuScreen(screen, game.selectedMenuOption);
                 } else if (game.state == GAME_OVER) {
-                    DrawGameOverScreen(screen, "", game.selectedMenuOption);
+                    DrawGameOverScreen(screen, game.selectedMenuOption);
+                } else if (game.state == ENTER_NAME) {
+                    DrawEnterName(screen, &game);
+                } else if (game.state == HIGH_SCORES) {
+                    DrawHighScores(screen, &game.highScores);
                 }
             EndMode2D();
         EndDrawing();

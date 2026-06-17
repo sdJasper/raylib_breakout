@@ -7,8 +7,10 @@
 #include "common.h"
 
 #define MAX_BRICKS 120
+#define MAX_NAME_LENGTH 15
+#define MAX_HIGHSCORES  10
 
-typedef enum { MENU, PLAYING, PAUSED, GAME_OVER } GameState;
+typedef enum { MENU, PLAYING, PAUSED, GAME_OVER, ENTER_NAME, HIGH_SCORES } GameState;
 
 typedef struct {
     Vector2 pos;
@@ -24,10 +26,18 @@ typedef struct {
 typedef struct {
     Rectangle rect;
     int moveSpeed;
-    int score;
-    int next;
     int lives;
 } Paddle;
+
+typedef struct {
+    char name[MAX_NAME_LENGTH + 1];
+    int score;
+} HighScore;
+
+typedef struct {
+    HighScore scores[MAX_HIGHSCORES];
+    int count;
+} HighScoreList;
 
 typedef struct {
     GameState state;
@@ -38,7 +48,22 @@ typedef struct {
     int selectedMenuOption;
     int level;
     bool devMode;
+    int score;
+    int next;
+    HighScoreList highScores;
+    char playerName[MAX_NAME_LENGTH + 1];
+    int nameLength;
+    bool newHighScore;
 } Game;
+
+typedef enum {
+    MENU_ACTION_NONE,
+    MENU_ACTION_START,
+    MENU_ACTION_QUIT,
+    MENU_ACTION_RESUME,
+    MENU_ACTION_PLAY_AGAIN,
+    MENU_ACTION_MAIN_MENU
+} MenuAction;
 
 Game Game_Init(Screen screen);
 void Game_Update(Game *game, Screen screen);
