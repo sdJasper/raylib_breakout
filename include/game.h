@@ -37,6 +37,7 @@ typedef struct {
     int brickCount;
     int selectedMenuOption;
     int level;
+    bool devMode;
 } Game;
 
 Game Game_Init(Screen screen);

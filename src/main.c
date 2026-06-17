@@ -579,7 +579,9 @@ void gameSetup(Game *game, Screen screen) {
 int main(void) {
     Screen screen = { 800, 450 };
 
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(screen.width, screen.height, "Breakout!!!");
+    SetWindowMinSize(640, 360);
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
 
@@ -643,15 +645,18 @@ int main(void) {
                 nextInflation = nextInflation * 2;
             }
             // DEV CHEAT FOR TESTING
-            if (IsKeyPressed(KEY_F1)) {
+            if (IsKeyDown(KEY_LEFT_SHIFT) && IsKeyPressed(KEY_F1)) {
+                game.devMode = !game.devMode;
+            }
+            if (game.devMode && IsKeyPressed(KEY_F1)) {
                 for (int i = 0; i < game.brickCount; i++) {
                     game.bricks[i].active = false;
                 }
             }
-            if (IsKeyPressed(KEY_F2)) {
+            if (game.devMode && IsKeyPressed(KEY_F2)) {
                 game.player.rect.width += 100;
             }
-            if (IsKeyPressed(KEY_F3)) {
+            if (game.devMode && IsKeyPressed(KEY_F3)) {
                 game.player.rect.width = 80;
             }
 
@@ -708,23 +713,38 @@ int main(void) {
 
         // === DRAW ===
         BeginDrawing();
-            ClearBackground((Color){ 5, 5, 60, 255 });
-            DrawDragonSpiralBackground(screen, (float)GetTime(), game.level);
+            ClearBackground(BLACK);
 
-            if (game.state == MENU) {
-                DrawMainMenuScreen(screen, game.selectedMenuOption);
-            }
+            float windowScale = fminf((float)GetScreenWidth() / screen.width, (float)GetScreenHeight() / screen.height);
+            float renderWidth = screen.width * windowScale;
+            float renderHeight = screen.height * windowScale;
+            float offsetX = ((float)GetScreenWidth() - renderWidth) * 0.5f;
+            float offsetY = ((float)GetScreenHeight() - renderHeight) * 0.5f;
 
-            if (game.state == PLAYING || game.state == PAUSED) {
-                DrawGameScene(&game, screen, scoreTextOffsetX);
+            Camera2D camera = { 0 };
+            camera.target = (Vector2){ screen.width * 0.5f, screen.height * 0.5f };
+            camera.offset = (Vector2){ offsetX + renderWidth * 0.5f, offsetY + renderHeight * 0.5f };
+            camera.zoom = windowScale;
+            camera.rotation = 0.0f;
 
-                if (game.state == PAUSED) {
-                    DrawPauseScreen(screen, game.selectedMenuOption);
+            BeginMode2D(camera);
+                ClearBackground((Color){ 5, 5, 60, 255 });
+                DrawDragonSpiralBackground(screen, (float)GetTime(), game.level);
+
+                if (game.state == MENU) {
+                    DrawMainMenuScreen(screen, game.selectedMenuOption);
                 }
-            } else if (game.state == GAME_OVER) {
-                DrawGameOverScreen(screen, "", game.selectedMenuOption);
-            }
 
+                if (game.state == PLAYING || game.state == PAUSED) {
+                    DrawGameScene(&game, screen, scoreTextOffsetX);
+
+                    if (game.state == PAUSED) {
+                        DrawPauseScreen(screen, game.selectedMenuOption);
+                    }
+                } else if (game.state == GAME_OVER) {
+                    DrawGameOverScreen(screen, "", game.selectedMenuOption);
+                }
+            EndMode2D();
         EndDrawing();
     }
 
