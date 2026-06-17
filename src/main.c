@@ -348,48 +348,27 @@ void DrawBricks(Brick bricks[], int brickCount) {
     for (int i = 0; i < brickCount; i++) {
         if (!bricks[i].active) continue;
 
-        int hp = bricks[i].hitPoints;
-        Color baseColor = bricks[i].color;
+        // Draw a shadow for each active brick
+        DrawShadow(bricks[i].rect, SHADOW_COLOR, SHADOW_OFFSET);
 
+        Color baseColor = bricks[i].color;
+        int hp = bricks[i].hitPoints;
         float alpha = (float)hp * 85.0f;
+
         if (bricks[i].destroying) {
             if ((int)(bricks[i].destroyTimer * 60) % 2 == 0) {
                 baseColor = WHITE;
-                alpha = 255.0f;
+                alpha = 100.0f;
             }
         }
 
-        DrawShadow(bricks[i].rect, SHADOW_COLOR, SHADOW_OFFSET);
         baseColor.a = (unsigned char)alpha;
-        DrawRectangleRec(bricks[i].rect, baseColor);
-
-        if (hp > 1) {
-            DrawRectangle(
-                bricks[i].rect.x + 4, bricks[i].rect.y + 4, 
-                bricks[i].rect.width - 12, 6, Fade(baseColor, 0.4f)
-            );
-        }
-
-        DrawRectangleLinesEx(bricks[i].rect, hp, Fade(WHITE, 0.3f));
-    }
-}
-
-void DrawStar(Vector2 center, float radius, Color color) {
-    const int points = 5;
-    float innerRadius = radius * 0.5f;
-    Vector2 vertices[10];
-
-    for (int i = 0; i < 10; i++) {
-        float angle = (-90.0f + i * 36.0f) * DEG2RAD;
-        float r = (i % 2 == 0) ? radius : innerRadius;
-        vertices[i] = (Vector2){ center.x + cosf(angle) * r, center.y + sinf(angle) * r };
-    }
-
-    for (int i = 0; i < points; i++) {
-        Vector2 a = vertices[(i * 2) % 10];
-        Vector2 b = vertices[(i * 2 + 1) % 10];
-        Vector2 c = vertices[(i * 2 + 2) % 10];
-        DrawTriangle(a, b, c, color);
+        Rectangle brick = bricks[i].rect;
+        DrawRectangleRec(brick, baseColor);
+        DrawRectangle(brick.x + 2, brick.y + 2, brick.width - 4, 4, Fade(WHITE, 0.35f));
+        DrawRectangle(brick.x + brick.width - 4, brick.y + 4, 4, brick.height - 8, Fade(BLACK, 0.25f));
+        DrawRectangle(brick.x + 4, brick.y + brick.height - 6, brick.width - 8, 4, Fade(BLACK, 0.25f));
+        DrawRectangleLinesEx(brick, hp, Fade(WHITE, 0.2f));
     }
 }
 
@@ -445,12 +424,12 @@ void DrawDragonSpiralBackground(Screen screen, float time, int level) {
 
 void DrawGameScene(Game *game, Screen screen, int scoreTextOffsetX) {
     // Draw Shadows first:
-    // DrawShadow(game->player.rect, SHADOW_COLOR, SHADOW_OFFSET);
     Rectangle playerShadow = game->player.rect;
     playerShadow.x += SHADOW_OFFSET;
     playerShadow.y += SHADOW_OFFSET;
     DrawRectangleRounded(playerShadow, 0.6f, 8, SHADOW_COLOR);
     DrawCircleShadow(game->ball.pos, game->ball.radius, SHADOW_COLOR, SHADOW_OFFSET);
+
     // Draw EXTRA lives
     for (int i = 1; i < game->player.lives; i++) {
         DrawCircleShadow((Vector2){ 30 + i * 25, 30 }, game->ball.radius, SHADOW_COLOR, SHADOW_OFFSET);
@@ -461,10 +440,37 @@ void DrawGameScene(Game *game, Screen screen, int scoreTextOffsetX) {
 
     // draw the rest of the game elements
     DrawBricks(game->bricks, game->brickCount);
-    Color paddleColor = { 255, 255, 255, 75 };
-    DrawRectangleRounded(game->player.rect, 0.6f, 8, paddleColor);
-    DrawRectangleRoundedLinesEx(game->player.rect, 0.75f, 12, 3, DARKGRAY);
-    DrawCircleV(game->ball.pos, game->ball.radius, RAYWHITE);
+
+    // Draw the player's paddle with 3D effect
+    Color paddleColor = { 255, 255, 255, 150 };
+    Rectangle paddle = game->player.rect;
+    
+    // Main paddle face
+    DrawRectangleRounded(paddle, 0.6f, 8, paddleColor);
+    
+    // Top highlight (light from above-left)
+    Rectangle highlightTop = { paddle.x + 2, paddle.y + 2, paddle.width - 4, 3 };
+    DrawRectangleRounded(highlightTop, 0.4f, 4, Fade(WHITE, 0.5f));
+    
+    // Bottom shadow (opposite side)
+    Rectangle shadowBottom = { paddle.x + 2, paddle.y + paddle.height - 5, paddle.width - 4, 3 };
+    DrawRectangleRounded(shadowBottom, 0.4f, 4, Fade(BLACK, 0.4f));
+    
+    // Right side shadow
+    Rectangle shadowRight = { paddle.x + paddle.width - 4, paddle.y + 4, 3, paddle.height - 8 };
+    DrawRectangleRounded(shadowRight, 0.3f, 2, Fade(BLACK, 0.3f));
+    
+    // 3D Ball with highlight and shadow
+    Color ballBase = RAYWHITE;
+    DrawCircleV(game->ball.pos, game->ball.radius, ballBase);
+    
+    // Highlight (upper-left)
+    Vector2 highlightOffset = { game->ball.pos.x - game->ball.radius * 0.35f, game->ball.pos.y - game->ball.radius * 0.35f };
+    DrawCircleV(highlightOffset, game->ball.radius * 0.35f, Fade(WHITE, 0.6f));
+    
+    // Shadow (lower-right)
+    Vector2 shadowOffset = { game->ball.pos.x + game->ball.radius * 0.4f, game->ball.pos.y + game->ball.radius * 0.4f };
+    DrawCircleV(shadowOffset, game->ball.radius * 0.25f, Fade(DARKGRAY, 0.4f));
 }
 
 void DrawPauseScreen(Screen screen, int selectedOption) {
