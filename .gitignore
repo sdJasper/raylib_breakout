@@ -60,5 +60,4 @@ build/
 *.out
 .vscode/settings.json
 
-!build/Breakout
-!build/windows/Breakout.exe
+!Breakout.exe
