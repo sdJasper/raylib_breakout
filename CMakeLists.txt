@@ -6,7 +6,9 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED True)
 
 # Find or download raylib
-find_package(raylib QUIET)
+if (NOT CMAKE_CROSSCOMPILING)
+    find_package(raylib QUIET)
+endif()
 if (NOT raylib_FOUND)
     include(FetchContent)
     FetchContent_Declare(
